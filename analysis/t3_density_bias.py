@@ -1,0 +1,88 @@
+"""Is the submitted density biased, and how much S_LWR would a simple correction buy?
+
+Note 105: S_LWR's residual is dominated by transitions with ONE target cell, where it equals |e L| with
+e = k_pred - k_true - the absolute density error, with no cancellation. And the submitted density is
+k = q_pred / v_pred = E[q|X] / E[v|X], while the quantity that matters is E[q/v|X]; the two differ by a Jensen
+gap that L2 training on q and v separately never corrects.
+
+This measures the bias and sweeps the simplest possible corrections:
+    k * c            one global multiplier
+    k * c_regime     one per regime
+    k * c_panel      one per panel
+The multiplier is applied at TARGET cells only, by scaling the submitted flow (speed is left alone, so S_FD is
+recomputed too).
+
+    py analysis/t3_density_bias.py [tag]
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from tfb.data import PANELS, load  # noqa: E402
+from tfb.metrics import REGIMES, state_score  # noqa: E402
+from tfb.physics import fd_params, physics_scores, ramp_ok  # noqa: E402
+from tfb.t1eval import family_mean  # noqa: E402
+
+PRED = ROOT / "work" / "preds"
+TAG = sys.argv[1] if len(sys.argv) > 1 else "t1_m3A"
+CS = (0.96, 0.98, 0.99, 1.0, 1.01, 1.02, 1.04)
+
+
+def main() -> None:
+    stats, out = {}, {}
+    for panel in PANELS:
+        f = PRED / f"{TAG}_{panel}_test.npz"
+        if not f.exists():
+            continue
+        p = np.load(f)
+        z = load(panel, "train")
+        days = p["days"]
+        prm, ok = fd_params(panel, z["link_ids"]), ramp_ok(panel, "train", z)
+        ts, tq = z["true_speed"], z["true_flow"]
+        tgt = z["target"] & np.isfinite(ts) & np.isfinite(tq)
+        sel = np.zeros(len(z["dates"]), bool); sel[days] = True
+        m = tgt & sel[:, None, None]
+        pv = np.zeros_like(ts); pq = np.zeros_like(tq)
+        pv[days], pq[days] = p["pv"], p["pq"]
+        k_true = tq / np.maximum(ts, 1.0)
+        k_pred = pq / np.maximum(pv, 1.0)
+        e = (k_pred - k_true)[m]
+        r = np.asarray(z["regime"], str)
+        a = stats.setdefault("all", [0.0, 0.0, 0.0, 0])
+        a[0] += float(e.sum()); a[1] += float(np.abs(e).sum()); a[2] += float((k_true[m]).sum()); a[3] += int(m.sum())
+        for reg in REGIMES:
+            mm = m & (r == reg)[:, None, None]
+            if mm.any():
+                b = stats.setdefault(reg, [0.0, 0.0, 0.0, 0])
+                ee = (k_pred - k_true)[mm]
+                b[0] += float(ee.sum()); b[1] += float(np.abs(ee).sum())
+                b[2] += float(k_true[mm].sum()); b[3] += int(mm.sum())
+        for c in CS:
+            q2 = np.where(m, pq * c, pq)
+            ph = physics_scores(z, pv, q2, prm, ok, days=sel)
+            st = state_score(z, pv, q2, cells=sel[:, None, None])
+            o = out.setdefault(c, {})
+            o[panel] = (ph["mean"]["S_LWR"], ph["mean"]["S_FD"], ph["mean"]["S_phys"], st["mean"]["S"])
+        print(f"  {panel}", flush=True)
+
+    for k, a in stats.items():
+        print(f"{k:<5} target cells {a[3]:>10,}  mean density error {a[0] / a[3]:+8.4f}  "
+              f"mean |error| {a[1] / a[3]:8.4f}  mean true density {a[2] / a[3]:8.3f}  "
+              f"relative bias {a[0] / max(a[2], 1e-9) * 100:+6.2f}%")
+    print(f"\n{'flow x c':>9} {'S_LWR':>8} {'S_FD':>8} {'S_phys':>8} {'S_state':>9} {'total change':>13}")
+    base = None
+    for c in CS:
+        v = [family_mean({p: out[c][p][i] for p in out[c]}) for i in range(4)]
+        tot = 0.15 * v[2] + 0.35 * v[3]
+        base = tot if c == 1.0 and base is None else base
+        print(f"{c:9.2f} {v[0]:8.4f} {v[1]:8.4f} {v[2]:8.4f} {v[3]:9.4f} {tot:13.5f}")
+    print("   (total change column is 0.15 S_phys + 0.35 S_state; compare rows against c = 1.00)")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,47 @@
+# --- environments and caches -------------------------------------------------------------------------------
+.venv/
+.hf_cache/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# --- competition data and the organizers' repository (clone / download separately) -----------------------------
+data/
+trafficflowbench-public/
+
+# --- experiment outputs: submissions, predictions, logs, checkpoints (work/ alone is several tens of GB) ---------
+work/
+*/cache/
+*/runs/
+tta_lab/assets/
+sim_lab/assets/
+occ_lab/models/*.pt
+
+# --- binary artefacts anywhere (model weights, arrays, cached predictions, tables) ----------------------------
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.npy
+*.pkl
+*.parquet
+*.feather
+*.h5
+*.zip
+*.log
+
+# CSVs are submissions or data dumps, never code
+*.csv
+
+# --- secrets (Kaggle CLI credentials live in ~/.kaggle, never in the project) -----------------------------------
+kaggle.json
+credentials.json
+access_token
+.env
+
+# --- editor / OS ----------------------------------------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

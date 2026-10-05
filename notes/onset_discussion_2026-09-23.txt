@@ -1,0 +1,351 @@
+Hi everyone, Reporting a regularity in how the Task 2 queue_onset windows appear to be selected. It does not expose any label and needs no data after T, but it makes onset windows much easier than intended, so I think everyone should know about it and you should decide whether it is acceptable.
+
+What I see
+
+For the train split, queue labels can be derived from train/mainline_states (speed <= 0.6 x free-flow speed). Doing that for the 40 shipped queue_onset train windows (8 corridors x 5):
+
+In 39 of 40 windows the first queued cell in the horizon appears at the last step, T+30. In no window does a queue appear at T+5 … T+25. (The remaining window has no queued cell among the cells with an observed speed.) The windows are small: median 3 queued cells, all at T+30. This is what you would get if the selector scans origins forward in time and keeps the earliest origin whose 30-minute horizon contains a queue: that origin is, by construction, the one where the queue starts at the very end of the horizon.
+
+Why it matters
+
+If validation and private windows were selected the same way, then for a queue_onset window a participant knows, before looking at any traffic, that steps T+5 … T+25 are empty and that a queue starts at exactly T+30. The task collapses from "when and where will a queue form in the next 30 minutes" to "which few links are queued at T+30, given that one starts right then". On the shipped train onset windows, with their dates held out of training:
+
+a general forecaster trained on windows where onset is spread over all six steps: IoU 0.57 the same features, trained only on windows where the first queue is at T+30 and predicting only that step: IoU 0.93 So roughly a third of an IoU point on half of the Task 2 windows comes from the selection rule rather than from forecasting skill. condition is published in window_index.csv, so the rule can be applied per window.
+
+To reproduce
+
+For each row of task2//train/window_index.csv with condition == queue_onset, take the six timestamps after forecast_origin from corridors//train/mainline_states, mark speed_kmh <= 0.6 * free_speed_kmh (from fd_parameters.csv), and record the first step with any marked link. It is step 6 every time.
+
+Questions
+
+Is this selection behaviour intended, and is a method that learns it from the released train windows within the rules? If it is not intended, would you consider drawing onset origins at a random offset before the first queued step (so first appearance is spread over T+5 … T+30)? For transparency: my current submission does use this, and I am happy to switch back to the general model depending on your answer. I would rather flag it now than have it surface at verification.
+
+Thanks for the careful handling of the earlier reports. Thanks for raising this.
+
+We checked, and the regularity does hold. It comes from the way we pick the window origins. You can keep using it. We are not changing the data or the metric, and I am posting an announcement now so that every team has the same information.
+
+
+これはかなり大きい話です。要するに、**Task 2 の `queue_onset` は「今後30分のどこかで渋滞が始まる」問題ではなく、データ生成上ほぼ「T+30で初めて渋滞が出ることが既知の空間予測問題」になっていた**、という報告です。
+
+仕組みはこうです。仮に実際の最初のqueue発生時刻を \(t^\*\) とします。window selector がforecast originを5分刻みで前から走査して、
+
+> 「このTから30分以内にqueueが存在する最初のT」
+
+を選んでいたとすると、選ばれるのは
+
+$$
+T=t^\*-30\text{ min}
+$$
+
+です。したがって6ステップ先は
+
+$$
+T+5,\ T+10,\ T+15,\ T+20,\ T+25,\ T+30
+$$
+
+ですが、最初のqueueは構造的に
+
+$$
+\boxed{T+30}
+$$
+
+にしか現れません。
+
+実データでも、trainの `queue_onset` 40窓について、39/40で最初のqueue cellがT+30。T+5〜T+25にqueueが出たwindowは0件。残り1件は観測speedがあるcellの中にqueueが確認できなかった、という結果です。
+
+つまり `window_index.csv` で
+
+```text
+condition == queue_onset
+```
+
+と分かった瞬間に、本来予測対象だった6 horizonのうち最初の5枚について、
+
+$$
+\hat Y_{T+5}
+=
+\hat Y_{T+10}
+=
+\cdots
+=
+\hat Y_{T+25}
+=
+0
+$$
+
+と置ける。
+
+残る問題は
+
+$$
+\boxed{\text{T+30で、どのリンク数個がqueueになるか}}
+$$
+
+だけです。
+
+これが「selection ruleによってtaskが簡単になる」という意味です。
+
+報告者の実験でも、通常の
+
+> 6 horizonのどこでonsetするかも含めて学習するforecaster
+
+だとholdout IoU 0.57だったのに、
+
+> onsetはT+30に来ると仮定して、T+30だけを学習・予測する
+
+モデルではIoU 0.93まで上がった、としています。
+
+差が巨大なのは当然で、前者は
+
+1. いつ発生するか
+2. どこで発生するか
+
+の両方を解いていますが、後者では「いつ」がselection ruleによって答えとして与えられているからです。
+
+そして一番重要なのがorganizerの回答です。
+
+> We checked, and the regularity does hold.
+> It comes from the way we pick the window origins.
+> **You can keep using it.**
+> We are not changing the data or the metric.
+
+したがってこれはもう「怪しいリークを発見した」状態ではありません。
+
+$$
+\boxed{\text{主催者確認済み・使用許可済みのbenchmark construction rule}}
+$$
+
+です。
+
+さらにannouncementを出して全teamに共有すると言っているので、特定teamだけが知っている情報でもなくなります。
+
+あなたたちの実装への意味はかなり直接的です。`queue_onset`については、もう6-step onset forecasterとして扱う必要がありません。
+
+```text
+queue_onset:
+    T+5  = all zero
+    T+10 = all zero
+    T+15 = all zero
+    T+20 = all zero
+    T+25 = all zero
+    T+30 = spatial onset model
+```
+
+でよい。
+
+そして学習データも「一般的なonset windows」を大量生成するより、
+
+$$
+\boxed{
+\text{first queue exactly at }T+30
+}
+$$
+
+という同じselector条件で作ったpseudo-windowだけを使う方がdistribution matchしています。
+
+ここはかなり重要です。例えば一般onset trainingで、
+
+```text
+T+10で発生
+T+20で発生
+T+30で発生
+```
+
+を全部混ぜると、評価時には存在しないtemporal uncertaintyをモデルに学習させてしまいます。
+
+したがって今後のonsetモデルは実質、
+
+$$
+X_{\le T}
+\rightarrow
+P(Y_{i,T+30}=1)
+$$
+
+という**single-horizon spatial segmentation / bottleneck localization**にしてよいです。
+
+あなたたちが以前見つけていた、
+
+> missed onsetの85%ではtrue bottleneckがTのtop3 peakに既に入っている
+
+という現象とも非常に整合的です。問題が本質的に「発生時刻を当てる」ことではなく、**T+30に発生する場所をtop候補から選ぶこと**だったわけです。
+
+もう一つ副作用があります。onsetのexpected-IoUやhorizon別thresholdなども再考できます。最初の5 horizonについては予測確率を最適化する意味すらありません。完全に0固定して、**T+30のIoU最大化だけにモデル容量・loss・ensembleを集中できる**からです。
+
+逆に `ongoing` にはこの話は直接効きません。ongoingは既にqueueが存在していて、未来30分のgrowth/dissolutionを本当に予測する必要があります。
+
+なのでTask 2は実質、
+
+$$
+\boxed{
+\begin{aligned}
+\text{onset} &: \text{T+30 spatial localization}\\
+\text{ongoing} &: \text{true 6-step spatiotemporal forecasting}
+\end{aligned}
+}
+$$
+
+という、かなり性質の違う2問題になったと理解するのが正確です。
+
+もし現在のonset pipelineがまだ6 horizonを普通に学習しているなら、これは微調整ではなく、**onset側の問題定義を作り直してよいレベルの公式情報**です。
+
+A participant reported a regularity in how the Task 2 windows were selected. It is real, we have checked it on all three splits, and this post hands it to everyone.
+
+For windows marked queue_onset in window_index.csv, the timing of the answer is fixed. In all 120 of them the queue appears only at T+30, and the first five steps, T+5 through T+25, are empty. The cause is the window selector. It keeps the earliest origin whose 30-minute horizon contains a queue, and for a queue that begins at time t that origin is t minus 30 minutes, so the queue lands on the final step by construction.
+
+queue_ongoing windows are not affected. That condition is defined by the 60 minutes of history already containing a queue, so a queue at the start of the horizon follows from the definition, and the history is published anyway.
+
+We are leaving the data and the metric as they are. The property comes from the selection rule rather than from the values, it can be derived from the train split, which ships with its answers, and it is now public. Rebuilding the data a third time seven weeks before the deadline would cost everyone more than it is worth, and redefining S_queue to ignore time would turn Task 2 into a different task.
+
+Using it is within the rules. You may condition on the condition column and place your predictions accordingly. Now that every team has been told, it is not an advantage held by anyone in particular.
+
+One thing worth knowing: under a space-time IoU, spreading a prediction evenly across all six steps is expensive. What Task 2 still asks, and what will separate the leaderboard, is which links queue.
+
+We would rather hand everyone the same information than let the ranking turn on who noticed. 
+
+これは前の主催者回答を、全参加者向けの公式アナウンスとして整理したものです。意味はかなり明確です。
+
+Task 2 の `queue_onset` 120窓すべてについて、
+
+$$
+T+5,\ T+10,\ T+15,\ T+20,\ T+25
+$$
+
+は必ず空で、queue は
+
+$$
+\boxed{T+30}
+$$
+
+にだけ出ます。
+
+理由は window selector です。実際のqueue開始時刻を \(t\) とすると、selector は「30分以内にqueueが入る最も早いforecast origin」を選びます。したがって選ばれるoriginは
+
+$$
+T=t-30\text{ min}
+$$
+
+となり、queue開始時刻 \(t\) は必ず forecast horizon の最後、
+
+$$
+T+30
+$$
+
+に一致します。これはデータ値から偶然見つかった相関ではなく、**window選択アルゴリズムから決定論的に生じる性質**です。
+
+主催者はさらに、これを train / validation / private の3 split全部で確認したと言っています。つまり trainだけの癖ではありません。
+
+したがって `queue_onset` では、予測時に
+
+$$
+\hat Y_{T+5:T+25}=0
+$$
+
+と固定してよく、実際に予測すべきなのは
+
+$$
+\boxed{\hat Y_{T+30}}
+$$
+
+の空間位置だけです。
+
+主催者が最後に
+
+> What Task 2 still asks ... is which links queue.
+
+と言っているのはその意味です。`queue_onset` に関しては「いつqueueになるか」はもう競技問題ではなく、残るのは
+
+> T+30でどのlinkがqueueになるか
+
+だけです。
+
+さらに重要なのが space-time IoU の話です。
+
+仮に正解がT+30の3cellだけだとして、モデルが同じ3cellを6 horizon全部に予測するとします。
+
+正解集合のサイズは
+
+$$
+|Y|=3
+$$
+
+ですが、予測集合は
+
+$$
+|\hat Y|=18
+$$
+
+です。intersectionはT+30の3cellだけなので、
+
+$$
+IoU=\frac{3}{18}=\frac16
+$$
+
+程度まで落ちます。
+
+つまり「時間が分からないから6ステップ全部に薄く出しておく」は非常に高くつきます。主催者が
+
+> spreading a prediction evenly across all six steps is expensive
+
+と言っているのはこれです。
+
+一方 `queue_ongoing` は影響なしです。
+
+`ongoing` は定義上、直前60分のhistoryにすでにqueueが存在します。そのhistory自体が公開されているので、
+
+> horizon開始時点でもqueueがある可能性が高い
+
+という情報はもともと観測から分かります。`queue_onset` のようにselection ruleから隠れた未来時刻が確定してしまう問題ではありません。
+
+競技ルール上も完全に使用可能と明言されています。
+
+主催者の立場は、
+
+* propertyはselection rule由来
+* train answerから導出可能
+* 今は全員に公開済み
+* condition列を使ってよい
+* predictionをそのconditionに応じて配置してよい
+
+というものです。
+
+なので実装上は、かなり強く、
+
+```text
+if condition == queue_onset:
+    pred[T+5:T+25] = 0
+    pred[T+30] = onset_spatial_model(...)
+```
+
+でよいです。
+
+さらに学習側も、一般的な6-step onset modelより、
+
+$$
+X_{\le T}
+\rightarrow
+Y_{T+30}
+$$
+
+だけを学習するsingle-horizon modelに寄せた方が自然です。
+
+今回のアナウンスによって、Task 2 は実質かなり明確に二分されます。
+
+$$
+\boxed{
+\text{queue\_onset}
+=
+\text{T+30 spatial localization}
+}
+$$
+
+$$
+\boxed{
+\text{queue\_ongoing}
+=
+\text{6-step spatiotemporal forecasting}
+}
+$$
+
+です。
+
+今のあなたたちのonset側で一番重要なのは、もはや時間方向ではなく、**T+30でqueueになる数リンクをどれだけ正確に選ぶか**です。これまで苦戦していた「top2-3候補のどれが本当のbottleneckか」という問題が、ほぼそのまま競技の核心になっています。
