@@ -2,6 +2,9 @@
 
 **最終順位：60 位 / 802 チーム（上位 7.5%）・private スコア 0.88204・2 名チーム**
 
+[コンペの概要（Kaggle）](https://www.kaggle.com/competitions/2026-ieee-big-data-traffic-flow-bench/overview) ・
+[リーダーボード（Kaggle）](https://www.kaggle.com/competitions/2026-ieee-big-data-traffic-flow-bench/leaderboard)
+
 > **English summary.** Our solution to the Kaggle competition *2026 IEEE Big Data – Traffic Flow Bench*, finishing
 > 60th of 802 teams (private 0.88204). The task is multi-objective freeway traffic analysis on simulated sensor data:
 > imputing masked speed / flow, forecasting where queues form 30 minutes ahead, physical (conservation-law)
@@ -17,7 +20,8 @@
 ## 1. どんなコンペか
 
 米カリフォルニアの高速道路 10 区間を模した交通シミュレーションのデータ（センサーごとの 5 分間隔の速度・交通量）
-を使い、次の 4 つの課題をまとめて解くコンペです。
+を使い、次の 4 つの課題をまとめて解くコンペです
+（詳細は [Kaggle のコンペページ](https://www.kaggle.com/competitions/2026-ieee-big-data-traffic-flow-bench/overview)）。
 
 | 課題 | 内容 | スコアの重み |
 |---|---|---|
@@ -34,7 +38,8 @@
 ![スコアの推移](docs/img/score_progress.png)
 
 - 公式ベースライン（0.553）から始めて、public スコアの最高は 0.8870 になりました。
-- 最終順位（private）は **60 位 / 802 チーム**、スコアは 0.88204 です。
+- 最終順位（private）は **60 位 / 802 チーム**、スコアは 0.88204 です
+  （[リーダーボード](https://www.kaggle.com/competitions/2026-ieee-big-data-traffic-flow-bench/leaderboard)）。
 
 ## 3. アプローチ
 
