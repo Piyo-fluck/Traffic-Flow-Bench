@@ -45,3 +45,6 @@ access_token
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# papers (third-party PDFs: do not redistribute)
+*.pdf
